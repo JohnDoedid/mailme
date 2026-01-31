@@ -7,6 +7,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <style>
 * { box-sizing:border-box; }
@@ -23,20 +24,25 @@ header { position:fixed; top:0; left:0; width:100%; height:50px; background:#f5f
 .meta-section { display:grid; grid-template-columns:60px 1fr auto; gap:8px; align-items:center; padding:6px 12px; border-bottom:1px solid #ddd; }
 .meta-section label { font-weight:bold; font-size:13px; }
 .meta-section input { width:100%; padding:5px; border:1px solid #aaa; font-size:13px; }
+.meta-section input.error { border-color:#c62828; background:#fff5f5; }
 #avatar { width:32px; height:32px; border:1px solid #aaa; border-radius:3px; }
 .editor-zone { display:grid; grid-template-columns:1fr 1fr; height:350px; border-top:1px solid #ccc; border-bottom:1px solid #ccc; }
 #markdown-input { border:none; border-right:1px solid #ccc; padding:10px; resize:none; font-family:Consolas, monospace; font-size:13px; }
 #preview { padding:10px; overflow-y:auto; background:#fcfcfc; font-size:13px; }
 .status-bar { display:flex; justify-content:space-between; padding:6px 12px; background:#f5f5f5; font-size:12px; border-top:1px solid #ccc; }
 .status-dot { width:8px; height:8px; background:green; border-radius:50%; display:inline-block; }
+.status-dot.offline { background:#999; }
+.status-dot.partial { background:orange; }
 footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; border-top:1px solid #bbb; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
 .send-btn { background:#e0e0e0; border:1px solid #888; padding:6px 14px; font-weight:bold; cursor:pointer; }
 .send-btn:hover { background:#d6d6d6; }
 .send-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.send-btn.secondary { background:#e0e0e0; font-weight:bold; }
 .toast { position:fixed; bottom:70px; right:20px; background:#333; color:#fff; padding:8px 12px; font-size:12px; display:none; z-index:2000; }
 .toast.show { display:block; }
 .toast.success { background:#2e7d32; }
 .toast.error { background:#c62828; }
+.toast.info { background:#1565c0; }
 
 /* Modal Styles */
 .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1500; }
@@ -52,6 +58,8 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
 .config-group small { display:block; margin-top:3px; color:#666; font-size:11px; }
 .save-config-btn { background:#4CAF50; color:#fff; border:none; padding:8px 16px; cursor:pointer; font-weight:bold; }
 .save-config-btn:hover { background:#45a049; }
+.cors-note { background:#fff3cd; border:1px solid #ffc107; padding:10px; margin:10px 0; font-size:12px; border-radius:4px; }
+.cors-note strong { display:block; margin-bottom:5px; }
 
 @media (max-width:800px){ .editor-zone{ grid-template-columns:1fr; height:auto;} footer{flex-direction:column; gap:8px; } }
 </style>
@@ -72,35 +80,35 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
 <!-- Email Meta -->
 <div class="meta-section">
     <label>To:</label>
-    <input type="email" id="to" placeholder="recipient@example.com" oninput="updateAvatar()">
+    <input type="email" id="to" placeholder="recipient@example.com" oninput="updateAvatar();validateEmail(this);saveDraft()">
     <img id="avatar" src="">
 </div>
 <div class="meta-section">
     <label>CC:</label>
-    <input id="cc" placeholder="cc@example.com" style="grid-column:2/4">
+    <input id="cc" placeholder="cc@example.com" style="grid-column:2/4" oninput="validateEmail(this);saveDraft()">
 </div>
 <div class="meta-section">
     <label>BCC:</label>
-    <input id="bcc" placeholder="bcc@example.com" style="grid-column:2/4">
+    <input id="bcc" placeholder="bcc@example.com" style="grid-column:2/4" oninput="validateEmail(this);saveDraft()">
 </div>
 <div class="meta-section">
     <label>Subject:</label>
-    <input id="subject" placeholder="Your subject..." style="grid-column:2/4">
+    <input id="subject" placeholder="Your subject..." style="grid-column:2/4" oninput="saveDraft()">
 </div>
 
 <!-- Fax Section -->
 <div class="meta-section">
     <label>Fax:</label>
-    <input type="text" id="fax-number" placeholder="Fax number (e.g., +1-555-1234)" style="grid-column:2/4">
+    <input type="text" id="fax-number" placeholder="Fax number (e.g., +1-555-1234)" style="grid-column:2/4" oninput="saveDraft()">
 </div>
 
 <div class="editor-zone">
-    <textarea id="markdown-input" placeholder="Write your message in Markdown..." oninput="syncPreview();updateCharCount()"></textarea>
+    <textarea id="markdown-input" placeholder="Write your message in Markdown..." oninput="syncPreview();updateCharCount();saveDraft()"></textarea>
     <div id="preview"></div>
 </div>
 
 <div class="status-bar">
-    <span><span class="status-dot"></span> <span id="connection-status">Offline</span></span>
+    <span><span class="status-dot" id="status-dot"></span> <span id="connection-status">Offline</span></span>
     <span id="char-count">0 characters</span>
 </div>
 
@@ -110,6 +118,9 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
     <button class="send-btn" onclick="handleSendEmail()">Send Email via SMTP</button>
     <button class="send-btn" onclick="handleMailtoFallback()">Open in Email Client</button>
     <button class="send-btn" onclick="handleSendFax()">Send Fax 📠</button>
+    <button class="send-btn secondary" onclick="copyToClipboard()">Copy</button>
+    <button class="send-btn secondary" onclick="exportAsHTML()">HTML</button>
+    <button class="send-btn secondary" onclick="exportAsPDF()">PDF</button>
 </footer>
 
 </div>
@@ -124,6 +135,11 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
             <button class="modal-close" onclick="closeSettings()">✕</button>
         </div>
         
+        <div class="cors-note">
+            <strong>NOTICE!!!:</strong>
+            Your SMTP/Fax servers must allow browser requests (CORS enabled). Most services require a backend proxy. This app uses mode: 'cors' for safe connections.
+        </div>
+        
         <h3 style="margin-top:0; font-size:15px; border-bottom:1px solid #ddd; padding-bottom:5px;">SMTP Configuration</h3>
         
         <div class="config-group">
@@ -136,6 +152,15 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
             <label>API Key (optional)</label>
             <input type="password" id="smtp-api-key" placeholder="Your API key">
             <small>Authentication token for your SMTP service</small>
+        </div>
+        
+        <div class="config-group">
+            <label>CORS Mode</label>
+            <select id="smtp-cors-mode">
+                <option value="cors">CORS (recommended)</option>
+                <option value="no-cors">No-CORS (limited response)</option>
+            </select>
+            <small>Use CORS mode for proper error handling. No-CORS for restrictive servers (won't show errors)</small>
         </div>
         
         <h3 style="font-size:15px; border-bottom:1px solid #ddd; padding-bottom:5px; margin-top:20px;">Fax Configuration</h3>
@@ -158,6 +183,15 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
             <small>Your registered fax number</small>
         </div>
         
+        <div class="config-group">
+            <label>Fax CORS Mode</label>
+            <select id="fax-cors-mode">
+                <option value="cors">CORS (recommended)</option>
+                <option value="no-cors">No-CORS (limited response)</option>
+            </select>
+            <small>Use CORS mode for proper error handling</small>
+        </div>
+        
         <button class="save-config-btn" onclick="saveSettings()">Save Settings</button>
     </div>
 </div>
@@ -167,10 +201,15 @@ footer { position:fixed; bottom:0; left:0; width:100%; background:#f5f5f5; borde
 let config = {
     smtpServer: '',
     smtpApiKey: '',
+    smtpCorsMode: 'cors',
     faxServer: '',
     faxApiKey: '',
-    fromFax: ''
+    fromFax: '',
+    faxCorsMode: 'cors'
 };
+
+// Auto-save draft timer
+let draftTimer = null;
 
 // Load config from localStorage
 function loadConfig() {
@@ -179,9 +218,11 @@ function loadConfig() {
         config = JSON.parse(saved);
         document.getElementById('smtp-server').value = config.smtpServer || '';
         document.getElementById('smtp-api-key').value = config.smtpApiKey || '';
+        document.getElementById('smtp-cors-mode').value = config.smtpCorsMode || 'cors';
         document.getElementById('fax-server').value = config.faxServer || '';
         document.getElementById('fax-api-key').value = config.faxApiKey || '';
         document.getElementById('from-fax').value = config.fromFax || '';
+        document.getElementById('fax-cors-mode').value = config.faxCorsMode || 'cors';
         updateConnectionStatus();
     }
 }
@@ -189,9 +230,11 @@ function loadConfig() {
 function saveSettings() {
     config.smtpServer = document.getElementById('smtp-server').value.trim();
     config.smtpApiKey = document.getElementById('smtp-api-key').value.trim();
+    config.smtpCorsMode = document.getElementById('smtp-cors-mode').value;
     config.faxServer = document.getElementById('fax-server').value.trim();
     config.faxApiKey = document.getElementById('fax-api-key').value.trim();
     config.fromFax = document.getElementById('from-fax').value.trim();
+    config.faxCorsMode = document.getElementById('fax-cors-mode').value;
     
     localStorage.setItem('mailme-config', JSON.stringify(config));
     updateConnectionStatus();
@@ -201,12 +244,17 @@ function saveSettings() {
 
 function updateConnectionStatus() {
     const statusEl = document.getElementById('connection-status');
+    const dotEl = document.getElementById('status-dot');
+    
     if(config.smtpServer && config.faxServer) {
         statusEl.textContent = 'Configured';
+        dotEl.className = 'status-dot';
     } else if(config.smtpServer || config.faxServer) {
         statusEl.textContent = 'Partially Configured';
+        dotEl.className = 'status-dot partial';
     } else {
         statusEl.textContent = 'Not Configured';
+        dotEl.className = 'status-dot offline';
     }
 }
 
@@ -216,6 +264,69 @@ function openSettings() {
 
 function closeSettings() {
     document.getElementById('settings-modal').classList.remove('show');
+}
+
+// ======== VALIDATION ========
+function validateEmail(input) {
+    const emails = input.value.split(',').map(e => e.trim()).filter(e => e);
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    
+    let allValid = true;
+    for(let email of emails) {
+        if(email && !emailRegex.test(email)) {
+            allValid = false;
+            break;
+        }
+    }
+    
+    if(input.value && !allValid) {
+        input.classList.add('error');
+    } else {
+        input.classList.remove('error');
+    }
+    
+    return allValid;
+}
+
+// ======== DRAFT AUTO-SAVE ========
+function saveDraft() {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+        const draft = {
+            to: document.getElementById('to').value,
+            cc: document.getElementById('cc').value,
+            bcc: document.getElementById('bcc').value,
+            subject: document.getElementById('subject').value,
+            faxNumber: document.getElementById('fax-number').value,
+            body: markdownInput.value,
+            timestamp: Date.now()
+        };
+        localStorage.setItem('mailme-draft', JSON.stringify(draft));
+    }, 1000);
+}
+
+function loadDraft() {
+    const saved = localStorage.getItem('mailme-draft');
+    if(saved) {
+        const draft = JSON.parse(saved);
+        // Only load if draft is less than 24 hours old
+        if(Date.now() - draft.timestamp < 86400000) {
+            document.getElementById('to').value = draft.to || '';
+            document.getElementById('cc').value = draft.cc || '';
+            document.getElementById('bcc').value = draft.bcc || '';
+            document.getElementById('subject').value = draft.subject || '';
+            document.getElementById('fax-number').value = draft.faxNumber || '';
+            markdownInput.value = draft.body || '';
+            syncPreview();
+            updateCharCount();
+            updateAvatar();
+            showToast('Draft restored', 'info');
+        }
+    }
+}
+
+function clearDraft() {
+    localStorage.removeItem('mailme-draft');
 }
 
 // ======== CORE JS ========
@@ -255,9 +366,16 @@ async function handleSendEmail() {
     const subject = document.getElementById('subject').value.trim() || "(no subject)";
     const body = markdownInput.value;
 
+    // Validation
     if(!toVal) { 
         showToast("Enter recipient email", "error"); 
+        to.focus();
         return; 
+    }
+
+    if(!validateEmail(to) || (cc && !validateEmail(document.getElementById('cc'))) || (bcc && !validateEmail(document.getElementById('bcc')))) {
+        showToast("Invalid email address format", "error");
+        return;
     }
 
     if(!config.smtpServer) {
@@ -267,7 +385,7 @@ async function handleSendEmail() {
     }
 
     try {
-        showToast("Sending email...", "success");
+        showToast("Sending email...", "info");
         
         const headers = {
             'Content-Type': 'application/json'
@@ -277,7 +395,7 @@ async function handleSendEmail() {
             headers['Authorization'] = `Bearer ${config.smtpApiKey}`;
         }
 
-        const response = await fetch(config.smtpServer, {
+        const fetchOptions = {
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
@@ -286,25 +404,44 @@ async function handleSendEmail() {
                 bcc: bcc || undefined,
                 subject: subject,
                 body: body,
-                html: marked.parse(body) // Send HTML version too
+                html: marked.parse(body)
             })
-        });
+        };
 
-        if(response.ok) {
+        // Add CORS mode
+        if(config.smtpCorsMode === 'no-cors') {
+            fetchOptions.mode = 'no-cors';
+        }
+
+        const response = await fetch(config.smtpServer, fetchOptions);
+
+        if(config.smtpCorsMode === 'no-cors') {
+            // Can't read response in no-cors mode, assume success
+            showToast("✓ Email sent (no-cors mode - can't verify)", "success");
+            clearFormAfterSend();
+        } else if(response.ok) {
             showToast("✓ Email sent successfully!", "success");
-            // Clear form
-            document.getElementById('subject').value = '';
-            markdownInput.value = '';
-            syncPreview();
-            updateCharCount();
+            clearFormAfterSend();
         } else {
-            const errorText = await response.text();
+            const errorText = await response.text().catch(() => 'Unknown error');
             showToast(`Failed to send: ${response.status} ${errorText}`, "error");
         }
     } catch(error) {
-        showToast(`Error sending email: ${error.message}`, "error");
+        if(error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            showToast(`CORS error: Server must allow browser requests. Check Settings or use a proxy.`, "error");
+        } else {
+            showToast(`Error sending email: ${error.message}`, "error");
+        }
         console.error('Email send error:', error);
     }
+}
+
+function clearFormAfterSend() {
+    document.getElementById('subject').value = '';
+    markdownInput.value = '';
+    syncPreview();
+    updateCharCount();
+    clearDraft();
 }
 
 // ======== MAILTO FALLBACK (PROPER ENCODING) ========
@@ -317,7 +454,13 @@ function handleMailtoFallback() {
 
     if(!toVal) { 
         showToast("Enter recipient email", "error"); 
+        to.focus();
         return; 
+    }
+
+    if(!validateEmail(to)) {
+        showToast("Invalid email address format", "error");
+        return;
     }
 
     // Build mailto URL with proper encoding
@@ -331,6 +474,12 @@ function handleMailtoFallback() {
     
     mailtoURL += params.join('&');
 
+    // Check URL length (some email clients have limits)
+    if(mailtoURL.length > 2000) {
+        showToast("Message too long for mailto. Try SMTP or copy to clipboard.", "error");
+        return;
+    }
+
     window.location.href = mailtoURL;
     showToast("Opening in email client...", "success");
 }
@@ -342,7 +491,15 @@ async function handleSendFax() {
 
     if(!faxNumber) { 
         showToast("Enter a fax number", "error"); 
+        document.getElementById('fax-number').focus();
         return; 
+    }
+
+    // Basic fax number validation
+    const faxRegex = /^[\d\s\-\+\(\)]+$/;
+    if(!faxRegex.test(faxNumber)) {
+        showToast("Invalid fax number format", "error");
+        return;
     }
 
     if(!config.faxServer) {
@@ -358,7 +515,7 @@ async function handleSendFax() {
     }
 
     try {
-        showToast("Sending fax...", "success");
+        showToast("Sending fax...", "info");
         
         const headers = {
             'Content-Type': 'application/json'
@@ -368,35 +525,168 @@ async function handleSendFax() {
             headers['Authorization'] = `Bearer ${config.faxApiKey}`;
         }
 
-        const response = await fetch(config.faxServer, {
+        const fetchOptions = {
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
                 to: faxNumber,
                 from: config.fromFax,
                 message: message,
-                content: marked.parse(message) // HTML version
+                content: marked.parse(message)
             })
-        });
+        };
 
-        if(response.ok) {
-            showToast(`📠 Fax sent to ${faxNumber}!`, "success");
+        // Add CORS mode
+        if(config.faxCorsMode === 'no-cors') {
+            fetchOptions.mode = 'no-cors';
+        }
+
+        const response = await fetch(config.faxServer, fetchOptions);
+
+        if(config.faxCorsMode === 'no-cors') {
+            showToast(`Fax sent to ${faxNumber} (no-cors mode - can't verify)`, "success");
+            document.getElementById('fax-number').value = '';
+        } else if(response.ok) {
+            showToast(`Fax sent to ${faxNumber}!`, "success");
             document.getElementById('fax-number').value = '';
         } else {
-            const errorText = await response.text();
+            const errorText = await response.text().catch(() => 'Unknown error');
             showToast(`Fax failed: ${response.status} ${errorText}`, "error");
         }
     } catch(error) {
-        showToast(`Error sending fax: ${error.message}`, "error");
+        if(error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            showToast(`CORS error: Server must allow browser requests. Check Settings.`, "error");
+        } else {
+            showToast(`Error sending fax: ${error.message}`, "error");
+        }
         console.error('Fax send error:', error);
     }
 }
 
+// ======== NEW FEATURE: COPY TO CLIPBOARD ========
+async function copyToClipboard() {
+    const subject = document.getElementById('subject').value.trim() || "(no subject)";
+    const body = markdownInput.value;
+    
+    const textToCopy = `Subject: ${subject}\n\n${body}`;
+    
+    try {
+        await navigator.clipboard.writeText(textToCopy);
+        showToast("Copied to clipboard!", "success");
+    } catch(error) {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showToast("Copied to clipboard!", "success");
+        } catch(e) {
+            showToast("Failed to copy to clipboard", "error");
+        }
+        document.body.removeChild(textarea);
+    }
+}
+
+// ======== NEW FEATURE: EXPORT AS HTML ========
+function exportAsHTML() {
+    const subject = document.getElementById('subject').value.trim() || "(no subject)";
+    const toVal = to.value.trim() || "recipient@example.com";
+    const htmlContent = marked.parse(markdownInput.value);
+    
+    const fullHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${subject}</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; line-height: 1.6; }
+        .email-header { border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }
+        .email-header p { margin: 5px 0; color: #555; }
+        .email-body { color: #222; }
+    </style>
+</head>
+<body>
+    <div class="email-header">
+        <p><strong>To:</strong> ${toVal}</p>
+        <p><strong>Subject:</strong> ${subject}</p>
+    </div>
+    <div class="email-body">
+        ${htmlContent}
+    </div>
+</body>
+</html>`;
+
+    const blob = new Blob([fullHTML], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${subject.replace(/[^a-z0-9]/gi, '_')}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showToast("Exported as HTML", "success");
+}
+
+// ======== NEW FEATURE: EXPORT AS PDF ========
+function exportAsPDF() {
+    const subject = document.getElementById('subject').value.trim() || "(no subject)";
+    const toVal = to.value.trim() || "recipient@example.com";
+    const htmlContent = marked.parse(markdownInput.value);
+    
+    const element = document.createElement('div');
+    element.style.padding = '20px';
+    element.innerHTML = `
+        <div style="border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px;">
+            <p style="margin: 5px 0;"><strong>To:</strong> ${toVal}</p>
+            <p style="margin: 5px 0;"><strong>Subject:</strong> ${subject}</p>
+        </div>
+        <div>${htmlContent}</div>
+    `;
+    
+    const opt = {
+        margin: 10,
+        filename: `${subject.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    
+    html2pdf().set(opt).from(element).save().then(() => {
+        showToast("Exported as PDF", "success");
+    }).catch(error => {
+        showToast("PDF export failed", "error");
+        console.error('PDF export error:', error);
+    });
+}
+
 // Initialize
 loadConfig();
+loadDraft();
 syncPreview();
 updateCharCount();
 updateAvatar();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd + S to save draft
+    if((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveDraft();
+        showToast('Draft saved', 'info');
+    }
+    // Ctrl/Cmd + Enter to send via SMTP
+    if((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleSendEmail();
+    }
+});
 </script>
 
 </body>
